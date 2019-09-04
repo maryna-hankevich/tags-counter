@@ -1,3 +1,6 @@
 .idea/
 tags.db
 response.html
+tags_counter.log
+build/
+dist/

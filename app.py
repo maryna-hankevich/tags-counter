@@ -1,10 +1,15 @@
+import logging
 import tkinter as tk
 from tkinter import messagebox
 
 import click
 import requests
+import yaml
 from bs4 import BeautifulSoup
 from peewee import *
+
+# Logger setup
+logging.basicConfig(filename='tags_counter.log', filemode='w', level=logging.INFO)
 
 # DB
 db = SqliteDatabase('tags.db')
@@ -27,18 +32,52 @@ def create_tables():
 
 
 # HELPERS
+def get_full_url(url):
+    logging.info("Open aliases yml...")
+    with open("aliases.yaml", 'r') as aliases_file:
+        try:
+            logging.info("Load aliases...")
+            aliases = yaml.safe_load(aliases_file)
+            full_url = aliases[url]
+            logging.info("Found alias")
+        except yaml.YAMLError:
+            logging.error("Can't parse yml")
+            full_url = url
+        except KeyError:
+            logging.info("Can't find alias")
+            full_url = url
+
+    if not full_url.lower().startswith("http"):
+        full_url = "https://" + full_url
+        logging.info("Add https to url...")
+
+    return full_url
+
+
 def get_tags_num(url):
+    url = get_full_url(url)
+
     try:
+        logging.info("Get html page...")
         response = requests.get(url)
-        open('./response.html', 'wb').write(response.content)
-        soup = BeautifulSoup(open('./response.html'), "html.parser")
+        logging.info("Write html page to file...")
+        file = open('./response.html', 'wb')
+        file.write(response.content)
+        file.close()
+        t = open('./response.html')
+        logging.info("Parse html page...")
+        soup = BeautifulSoup(t, "html.parser")
         tags_num = len(soup.find_all())
+        t.close()
 
     except requests.exceptions.InvalidURL:
+        logging.error("Invalid url")
         return None
     except requests.exceptions.ConnectionError:
+        logging.error("Connection error")
         return None
 
+    logging.info("Save to DB...")
     with db.atomic():
         try:
             Tag.create(
@@ -53,10 +92,14 @@ def get_tags_num(url):
 
 
 def get_tags_num_from_db(url):
+    url = get_full_url(url)
+
+    logging.info("Load from DB...")
     try:
         tag = Tag.get(url=url)
         return tag.count
     except Tag.DoesNotExist:
+        logging.error("Can't load from DB...")
         return None
 
 
@@ -81,8 +124,10 @@ canvas.create_window(200, 140, window=url_entry)
 
 def on_calculate_click():
     url = url_entry.get()
-    if not url.lower().startswith("http"):
-        messagebox.showinfo("Error", "URL should start from 'http'")
+
+    tags_num = get_tags_num_from_db(url)
+    if tags_num is not None:
+        result_label['text'] = 'Result from db: ' + str(tags_num)
         return
 
     tags_num = get_tags_num(url)
@@ -93,24 +138,9 @@ def on_calculate_click():
     result_label['text'] = 'Result: ' + str(tags_num)
 
 
-def on_get_from_db_click():
-    url = url_entry.get()
-    if not url.lower().startswith("http"):
-        messagebox.showinfo("Error", "URL should start from 'http'")
-        return
-
-    tags_num = get_tags_num_from_db(url)
-    if tags_num is None:
-        result_label['text'] = 'Result not Found in DB'
-    else:
-        result_label['text'] = 'Result from DB: ' + str(tags_num)
-
-
 # buttons
 get_button = tk.Button(text='Calculate tags', command=on_calculate_click)
 canvas.create_window(200, 180, window=get_button)
-view_button = tk.Button(text='Get from DB', command=on_get_from_db_click)
-canvas.create_window(200, 210, window=view_button)
 
 # result label
 result_label = tk.Label(master, text='')
@@ -119,10 +149,6 @@ canvas.create_window(200, 240, window=result_label)
 
 # CLI
 def _get(url):
-    if not url.lower().startswith("http"):
-        print("Error: URL should start from 'http'")
-        return
-
     tags_num = get_tags_num(url)
 
     if tags_num is None:
@@ -134,10 +160,6 @@ def _get(url):
 
 
 def _view(url):
-    if not url.lower().startswith("http"):
-        print("Error: URL should start from 'http'")
-        return
-
     tags_num = get_tags_num_from_db(url)
 
     if tags_num is None:

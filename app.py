@@ -1,9 +1,13 @@
+import json
 import logging
 import tkinter as tk
+from collections import defaultdict
+from datetime import datetime
 from tkinter import messagebox
 
 import click
 import requests
+import tldextract
 import yaml
 from bs4 import BeautifulSoup
 from peewee import *
@@ -22,7 +26,9 @@ class BaseModel(Model):
 
 class Tag(BaseModel):
     url = CharField(unique=True)
-    count = DecimalField(default=None)
+    domain_name = CharField()
+    tags = TextField()
+    updatedAt = DateTimeField()
 
 
 # simple utility function to create tables
@@ -67,7 +73,11 @@ def get_tags_num(url):
         t = open('./response.html')
         logging.info("Parse html page...")
         soup = BeautifulSoup(t, "html.parser")
-        tags_num = len(soup.find_all())
+
+        results = defaultdict(int)
+        for tag in soup.findAll():
+            results[tag.name] = len(soup.findAll(tag.name))
+
         t.close()
 
     except requests.exceptions.InvalidURL:
@@ -79,16 +89,34 @@ def get_tags_num(url):
 
     logging.info("Save to DB...")
     with db.atomic():
+        dumps = str(json.dumps(results))
+        extract = tldextract.extract(url)
+        name = str(extract.domain)
         try:
-            Tag.create(
+            tag = Tag.create(
                 url=url,
-                count=tags_num)
+                domain_name=name,
+                tags=dumps,
+                updatedAt=datetime.now()
+            )
         except IntegrityError:
-            Tag.update(
+            tag = Tag.update(
                 url=url,
-                count=tags_num)
+                domain_name=name,
+                tags=dumps,
+                updatedAt=datetime.now()
+            )
 
-    return tags_num
+    result = parse_dict_to_string(results)
+
+    return result
+
+
+def parse_dict_to_string(results):
+    result = ''
+    for elem in sorted(results.items(), key=lambda x: x[1], reverse=True):
+        result += elem[0] + ":\t" + str(elem[1]) + "\n"
+    return result
 
 
 def get_tags_num_from_db(url):
@@ -97,7 +125,12 @@ def get_tags_num_from_db(url):
     logging.info("Load from DB...")
     try:
         tag = Tag.get(url=url)
-        return tag.count
+        tags = json.loads(tag.tags.encode())
+
+        result = parse_dict_to_string(tags)
+
+        return result
+
     except Tag.DoesNotExist:
         logging.error("Can't load from DB...")
         return None
@@ -106,7 +139,7 @@ def get_tags_num_from_db(url):
 # gui
 master = tk.Tk()
 
-canvas = tk.Canvas(master, width=400, height=300)
+canvas = tk.Canvas(master, width=400, height=800)
 canvas.pack()
 
 label1 = tk.Label(master, text='Calculate number of HTML tags')
@@ -125,17 +158,17 @@ canvas.create_window(200, 140, window=url_entry)
 def on_calculate_click():
     url = url_entry.get()
 
-    tags_num = get_tags_num_from_db(url)
-    if tags_num is not None:
-        result_label['text'] = 'Result from db: ' + str(tags_num)
+    tag_result = get_tags_num_from_db(url)
+    if tag_result is not None:
+        result_label['text'] = 'Result from db: \n ' + tag_result
         return
 
-    tags_num = get_tags_num(url)
-    if tags_num is None:
+    tag_result = get_tags_num(url)
+    if tag_result is None:
         messagebox.showinfo("Error", "Invalid URL")
         return
 
-    result_label['text'] = 'Result: ' + str(tags_num)
+    result_label['text'] = 'Result: ' + tag_result
 
 
 # buttons
@@ -144,29 +177,29 @@ canvas.create_window(200, 180, window=get_button)
 
 # result label
 result_label = tk.Label(master, text='')
-canvas.create_window(200, 240, window=result_label)
+canvas.create_window(200, 540, window=result_label)
 
 
 # CLI
 def _get(url):
-    tags_num = get_tags_num(url)
+    tags_result = get_tags_num(url)
 
-    if tags_num is None:
+    if tags_result is None:
         print('Error: Check URL and internet connection')
         return
 
-    print('Result: ', tags_num)
+    print('Result:\n', tags_result)
     pass
 
 
 def _view(url):
-    tags_num = get_tags_num_from_db(url)
+    tags_result = get_tags_num_from_db(url)
 
-    if tags_num is None:
+    if tags_result is None:
         print('Error: URL is not found in DB')
         return
 
-    print('Result from DB: ', tags_num)
+    print('Result from DB:\n', str(tags_result))
     pass
 
 

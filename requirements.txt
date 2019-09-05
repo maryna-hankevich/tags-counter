@@ -5,3 +5,7 @@ peewee
 click
 tk
 logging
+json
+tldextract
+datetime
+collections
